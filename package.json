@@ -1,0 +1,16 @@
+{
+  "name": "ctf-grid-game",
+  "version": "0.2.0",
+  "description": "CTF-GRID v3 binary walking-skeleton — server + bridge + web UI (team #9)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "server": "node server.js",
+    "bridge": "node bridge.js",
+    "web": "node serve.js",
+    "test": "node protocol.test.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CTF-GRID v3 (binary) — player</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 820px; margin-inline: auto; }
+  h1 { font-size: 1.1rem; margin: 0 0 1rem; }
+  fieldset { border: 1px solid #8884; border-radius: 8px; margin: 0 0 1rem; padding: .8rem 1rem; }
+  legend { font-weight: 600; padding: 0 .4rem; }
+  input { font: inherit; padding: .3rem .5rem; border-radius: 6px; border: 1px solid #8886; background: transparent; color: inherit; }
+  button { font: inherit; padding: .4rem .9rem; border-radius: 6px; cursor: pointer; border: 1px solid #8886; background: #8881; color: inherit; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  .pad { display: grid; grid-template-columns: repeat(3, 3rem); gap: .4rem; width: max-content; }
+  .pad button { width: 3rem; }
+  #status.on { color: #16a34a; font-weight: 600; } #status.off { color: #dc2626; font-weight: 600; }
+  #me { color: #6b7280; }
+  #log { font: 12.5px/1.45 ui-monospace, monospace; background: #8881; border-radius: 8px; padding: .6rem .8rem; height: 300px; overflow-y: auto; white-space: pre-wrap; }
+  .rx { color: #2563eb; } .tx { color: #16a34a; } .sys { color: #9ca3af; }
+</style>
+</head>
+<body>
+  <h1>CTF-GRID v3 (binary) — player</h1>
+
+  <fieldset>
+    <legend>Connection</legend>
+    <div class="row">
+      <label>Bridge <input id="url" value="ws://localhost:8080" size="22" /></label>
+      <label>Name <input id="name" value="Cruz" size="12" maxlength="20" /></label>
+      <button id="connect">Connect &amp; join</button>
+      <button id="disconnect" disabled>Disconnect</button>
+    </div>
+    <p><span id="status" class="off">disconnected</span> · <span id="me"></span></p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Send (INPUT direction + INTERACT)</legend>
+    <div class="pad">
+      <span></span><button data-dir="UP" disabled>▲</button><span></span>
+      <button data-dir="LEFT" disabled>◀</button>
+      <button data-dir="NONE" disabled>■</button>
+      <button data-dir="RIGHT" disabled>▶</button>
+      <span></span><button data-dir="DOWN" disabled>▼</button><span></span>
+    </div>
+    <p><button id="interact" disabled>INTERACT (grab / steal)</button></p>
+  </fieldset>
+
+  <fieldset>
+    <legend>World (live — updates every tick, all players)</legend>
+    <div id="tickInfo" style="color:#6b7280">waiting for GAME_STATE…</div>
+    <div id="players" style="font-family:ui-monospace,monospace;margin-top:.4rem"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Traffic (handshake + events only — GAME_STATE goes to the panel above)</legend>
+    <div id="log"></div>
+  </fieldset>
+
+<script type="module">
+import { encode, decode, DIRECTION, FLAG_STATUS, MATCH_STATE, fromFixed } from "/protocol.js";
+
+const $ = (s) => document.querySelector(s);
+const logEl = $("#log");
+let ws = null, myId = null, cfg = null, gsCount = 0;
+const names = new Map();
+
+function log(cls, text) {
+  const line = document.createElement("div");
+  line.className = cls;
+  line.textContent = `${new Date().toLocaleTimeString()}  ${text}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function setConnected(on) {
+  $("#status").textContent = on ? "connected" : "disconnected";
+  $("#status").className = on ? "on" : "off";
+  $("#connect").disabled = on; $("#disconnect").disabled = !on;
+  if (!on) setSendEnabled(false);
+}
+function setSendEnabled(on) {
+  document.querySelectorAll(".pad button, #interact").forEach((b) => (b.disabled = !on));
+}
+function send(msg) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(encode(msg));                       // Uint8Array -> binary WS frame
+  log("tx", `SENT  ${msg.type}  ${summ(msg)}`);
+}
+const nameOf = (id) => `P${id}${names.has(id) ? `(${names.get(id)})` : ""}`;
+
+// Live view of EVERY player from the full snapshot — this is what makes the
+// other client's movement visible. GAME_STATE carries all players, always.
+function renderWorld(m) {
+  const flag = Object.keys(FLAG_STATUS)[m.flagStatus - 1];
+  $("#tickInfo").textContent =
+    `tick ${m.tick} · flag ${flag}${m.flagCarrierId ? ` (carrier ${nameOf(m.flagCarrierId)})` : ""} · ${m.players.length} players`;
+  $("#players").innerHTML = m.players.map((p) => {
+    const you = p.playerId === myId;
+    return `<div${you ? ' style="font-weight:600"' : ""}>` +
+      `${nameOf(p.playerId).padEnd(16)} x=${fromFixed(p.x).toFixed(1).padStart(8)} y=${fromFixed(p.y).toFixed(1).padStart(8)} ` +
+      `dir=${Object.keys(DIRECTION)[p.direction].padEnd(5)}${p.hasFlag ? " 🚩" : ""}${you ? "  ← you" : ""}</div>`;
+  }).join("");
+}
+function summ(m) {
+  switch (m.type) {
+    case "INPUT": return `dir=${Object.keys(DIRECTION)[m.direction]}`;
+    case "JOIN": return `name=${m.name}`;
+    default: return "";
+  }
+}
+
+function handle(m) {
+  switch (m.type) {
+    case "JOIN_ACCEPTED":
+      myId = m.playerId; setSendEnabled(true);
+      $("#me").textContent = `you are ${nameOf(myId)} (game ${m.gameId})`;
+      log("rx", `RECV JOIN_ACCEPTED  -> ${nameOf(myId)}`); break;
+    case "LOBBY_STATE":
+      m.players.forEach((p) => names.set(p.playerId, p.name));
+      log("rx", `RECV LOBBY_STATE  [${Object.keys(MATCH_STATE)[m.state - 1]}] ${m.players.map((p) => nameOf(p.playerId)).join(", ")}`); break;
+    case "GAME_COUNTDOWN": log("rx", `RECV GAME_COUNTDOWN  ${m.secondsRemaining}`); break;
+    case "GAME_STARTED":
+      cfg = { mapSize: fromFixed(m.mapSize), circleRadius: fromFixed(m.circleRadius), interactionRadius: fromFixed(m.interactionRadius) };
+      m.players.forEach((p) => names.set(p.playerId, p.name));
+      log("rx", `RECV GAME_STARTED  map=${cfg.mapSize} circle=${cfg.circleRadius} interact=${cfg.interactionRadius} players=${m.players.length}`); break;
+    case "GAME_STATE": {
+      gsCount++;
+      renderWorld(m);              // all players, live, in place — no log spam
+      break;
+    }
+    case "FLAG_PICKED_UP": log("rx", `RECV FLAG_PICKED_UP  ${nameOf(m.playerId)} @${m.tick}`); break;
+    case "FLAG_STOLEN": log("rx", `RECV FLAG_STOLEN  ${nameOf(m.previousCarrierId)} -> ${nameOf(m.newCarrierId)} @${m.tick}`); break;
+    case "PLAYER_DISCONNECTED": log("rx", `RECV PLAYER_DISCONNECTED  ${nameOf(m.playerId)}`); names.delete(m.playerId); break;
+    case "GAME_OVER": log("rx", `RECV GAME_OVER  winner ${nameOf(m.winnerId)} "${m.winnerName}"`); break;
+    case "JOIN_REJECTED": log("rx", `RECV JOIN_REJECTED  reason=${m.reason}`); break;
+    case "ERROR": log("rx", `RECV ERROR  code=${m.code} "${m.description}"`); break;
+    case "__UNKNOWN__": log("sys", `(ignored unknown type 0x${m.code.toString(16)})`); break;
+    default: log("rx", `RECV ${m.type}`);
+  }
+}
+
+$("#connect").onclick = () => {
+  const url = $("#url").value.trim();
+  const name = $("#name").value.trim() || "player";
+  myId = null; gsCount = 0; names.clear();
+  try { ws = new WebSocket(url); } catch (e) { log("sys", `bad URL: ${e.message}`); return; }
+  ws.binaryType = "arraybuffer";
+  log("sys", `connecting to ${url} …`);
+  ws.onopen = () => { setConnected(true); log("sys", "connected"); send({ type: "JOIN", name }); };
+  ws.onclose = () => { setConnected(false); log("sys", "connection closed"); };
+  ws.onerror = () => log("sys", "socket error (is the bridge running?)");
+  ws.onmessage = (ev) => {
+    let m; try { m = decode(new Uint8Array(ev.data)); } catch (e) { log("sys", `decode error: ${e.message}`); return; }
+    handle(m);
+  };
+};
+$("#disconnect").onclick = () => ws && ws.close();
+document.querySelectorAll(".pad button").forEach((b) =>
+  (b.onclick = () => send({ type: "INPUT", playerId: myId, direction: DIRECTION[b.dataset.dir] }))
+);
+$("#interact").onclick = () => send({ type: "INTERACT", playerId: myId });
+</script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+# Team 9 — Handoff (CTF-GRID, v3 binary)
+
+**From:** Cruz · **For:** Rosángela (+ her Claude Code) · **Date:** 2026-07-25
+
+Read this first, then `CLAUDE.md` (context for Claude Code), then the protocol in
+`protocolo/`. This package is self-contained — everything you need is in this folder.
+
+---
+
+## 1. TL;DR — where we are
+
+We (team 9, JS/Phaser) are building the CTF game on the **v3 binary protocol**.
+The **communication layer is built and confirmed working end to end**. The actual
+game visuals and some networking niceties are not done yet.
+
+| Area | Status |
+|---|---|
+| Binary codec (encode/decode all messages) | ✅ done, golden-byte tested (`npm test`) |
+| Server + game loop (movement, flag, steal, victory) | ✅ works (minimal, not polished) |
+| Bridge (browser ↔ TCP server, binary) | ✅ works |
+| Web UI (connect, join, INPUT/INTERACT buttons, live player panel) | ✅ works (labels/panel, **no game graphics yet**) |
+| Cross-machine over Tailscale (Mac server ↔ Windows VM client) | ✅ confirmed |
+| **Phaser rendering** (draw the map/circle/flag/players) | ❌ not started — biggest next piece |
+| **UDP server discovery** (§19) | ❌ not started (we connect manually for now) |
+| Cross-team interop (vs another group's server) | ❌ not tested yet |
+| Client-side prediction (§31, optional) | ❌ not started |
+
+**Bottom line:** the hard, risky part — binary comms across a real network — is
+proven. What's left is mostly the *client* (make it look like a game) plus
+discovery and interop testing.
+
+---
+
+## 2. The protocol we're using — IMPORTANT status
+
+- We're implementing **`protocolo/PRFC-VERSION-3.md`** (binary, big-endian,
+  continuous plane, 4-direction movement).
+- Our code also applies **`protocolo/PRFC-VERSION-3-enmiendas-parte1.md`** — gap
+  fixes we proposed (framing-error → close, `str` length in bytes, fixed-point
+  rounding, etc.). The codec already implements these.
+- ⚠️ **v3 is still `Propuesto`, not ratified by the class.** The currently
+  "Vigente" spec is v2 (JSON). The class still has to vote v3 in. So treat the
+  binary choice as *our team's direction*, not a class-final decision. If the
+  class stays on v2 JSON, the `demo/` folder (our older JSON walking skeleton)
+  is the fallback.
+
+---
+
+## 3. What's in this folder
+
+```
+game/
+  protocol.js        the binary codec — SINGLE SOURCE OF TRUTH for the wire format
+  protocol.test.js   golden-byte + round-trip self-tests  ->  npm test
+  server.js          authoritative server + 20 tps game loop (§30)
+  bridge.js          dumb WS<->TCP binary pipe (browser can't do raw TCP)
+  serve.js           tiny static server for the web UI
+  bot.js             headless test client (raw TCP) — plays toward the flag
+  web/index.html     the player UI (plain HTML, imports protocol.js)
+  CLAUDE.md          context for Claude Code
+  HANDOFF.md         this file
+  protocolo/         the v3 spec + our proposed amendments
+```
+
+The codec (`protocol.js`) is deliberately environment-agnostic — the same file
+runs in the Node server, the Node bridge, and the browser. **If you change the
+wire format, change it there and nowhere else, and re-run `npm test`.**
+
+---
+
+## 4. How to run it
+
+```bash
+npm install                          # once (pulls in `ws`)
+node server.js 5100 1 2              # authority (min-players=1 so you can test solo)
+node bridge.js 127.0.0.1 5100 8080   # bridge for a browser player
+npm run web                          # web UI at http://localhost:5173
+```
+
+Open `http://localhost:5173`, bridge `ws://localhost:8080`, **Connect & join**.
+For a second player: run another bridge on `8081` and open a second tab, or run
+`node bot.js Bot 127.0.0.1 5100`.
+
+- ⚠️ **Use port 5100, not 5000** — 5000 is taken by macOS AirPlay Receiver.
+- **Cross-machine:** the client's bridge points at the server host's IP, e.g.
+  `node bridge.js <server-ip> 5100 8080`. Over Tailscale it just works; allow the
+  firewall prompt on the server side.
+
+**Verify the codec is correct:** `npm test` — all checks must pass, especially the
+golden bytes `11 03 00 07 01` (an INPUT from P07 moving up). If that byte string
+is wrong, we don't interoperate with anyone.
+
+---
+
+## 5. What to pick up next (suggested order)
+
+1. **Phaser rendering.** Replace the label panel in `web/index.html` with a Phaser
+   canvas: draw the map bounds, the central circle (radius from `GAME_STARTED`),
+   the flag, and each player from `GAME_STATE`. The networking already delivers
+   everything — you're just drawing `m.players` each tick. Remember: coordinates
+   arrive as fixed-point (×100) — use `fromFixed()`; origin is center; **y grows
+   down**.
+2. **Client-side smoothing** (optional): interpolate between snapshots so movement
+   looks smooth at 60fps despite 20 snapshots/sec. Never authoritative.
+3. **UDP discovery** (§19/§27): add it to the bridge (browsers can't do UDP), so
+   the UI lists servers instead of typing an IP.
+4. **Cross-team interop**: point our client at another group's server and share
+   golden bytes to debug.
+
+---
+
+## 6. Key decisions & why (so we don't relitigate)
+
+- **Binary over JSON**: the class discussion wants deeper networking; binary is
+  ~10× smaller and more impressive. Cost: harder to debug, higher interop risk.
+  We accept it *if* the class commits (see the open question below).
+- **Fixed-point integers, not floats** (coords are `world × 100` as i32): avoids
+  IEEE-754 float disagreements across 6 languages — the worst binary interop trap.
+- **Big-endian everywhere**, `u16` length-prefix framing on TCP. The #1 interop
+  bug is endianness — check it first if something won't connect.
+- **Server is sole authority**; clients send only `INPUT` (direction) and
+  `INTERACT`. Never positions.
+
+---
+
+## 7. Open questions to decide together
+
+1. **Flag-day vs. negotiated encoding.** v3 as written is an incompatible cutover
+   — every team must switch to binary at once. Safer alternative: keep v2 JSON as
+   a baseline and negotiate binary as an opt-in upgrade in `JOIN`. Grade depends
+   on *all* teams connecting, so this matters.
+2. **Keep the auto game loop, or pure lobby?** The server currently auto-starts a
+   match at N players. For pure comms testing we could keep it lobby-only.
+3. **Get the enmiendas (Parte 1) ratified** by the class before byte-exact coding
+   spreads.
