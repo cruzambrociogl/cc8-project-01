@@ -18,9 +18,9 @@ game visuals and some networking niceties are not done yet.
 | Binary codec (encode/decode all messages) | ✅ done, golden-byte tested (`npm test`) |
 | Server + game loop (movement, flag, steal, victory) | ✅ works (minimal, not polished) |
 | Bridge (browser ↔ TCP server, binary) | ✅ works |
-| Web UI (connect, join, INPUT/INTERACT buttons, live player panel) | ✅ works (labels/panel, **no game graphics yet**) |
 | Cross-machine over Tailscale (Mac server ↔ Windows VM client) | ✅ confirmed |
-| **Phaser rendering** (draw the map/circle/flag/players) | ❌ not started — biggest next piece |
+| **Phaser rendered client** (map, circle, flag, players, keyboard, smoothing) | ✅ **done (Phase 1)** — `web/net.js` + `web/game.js` |
+| Lobby / countdown / winner overlays (client) | ✅ done · host-controlled start still ❌ (server auto-starts) |
 | **UDP server discovery** (§19) | ❌ not started (we connect manually for now) |
 | Cross-team interop (vs another group's server) | ❌ not tested yet |
 | Client-side prediction (§31, optional) | ❌ not started |
@@ -94,18 +94,22 @@ is wrong, we don't interoperate with anyone.
 
 ## 5. What to pick up next (suggested order)
 
-1. **Phaser rendering.** Replace the label panel in `web/index.html` with a Phaser
-   canvas: draw the map bounds, the central circle (radius from `GAME_STARTED`),
-   the flag, and each player from `GAME_STATE`. The networking already delivers
-   everything — you're just drawing `m.players` each tick. Remember: coordinates
-   arrive as fixed-point (×100) — use `fromFixed()`; origin is center; **y grows
-   down**.
-2. **Client-side smoothing** (optional): interpolate between snapshots so movement
-   looks smooth at 60fps despite 20 snapshots/sec. Never authoritative.
-3. **UDP discovery** (§19/§27): add it to the bridge (browsers can't do UDP), so
+Phase 1 (Phaser rendering + keyboard input + snapshot interpolation) is **done** —
+see `web/net.js` (wire + interpolation) and `web/game.js` (render + input).
+Remaining:
+
+1. **Client-side prediction** (optional, §31): move your own player locally on
+   keypress and reconcile when `GAME_STATE` arrives, for a zero-lag feel.
+2. **Lobby / host-controlled start**: the server auto-starts at N players today;
+   add a host-triggered start. The client already shows lobby/countdown overlays.
+3. **UDP discovery** (§19/§27): add it to the bridge (browsers can't do UDP) so
    the UI lists servers instead of typing an IP.
 4. **Cross-team interop**: point our client at another group's server and share
    golden bytes to debug.
+
+Rendering notes for `game.js`: coords arrive fixed-point (×100) → use
+`fromFixed()` (done in `net.js`); origin is center; **y grows down**; the
+world→screen transform lives in `game.js` (`tx`/`ty`/`s`).
 
 ---
 
