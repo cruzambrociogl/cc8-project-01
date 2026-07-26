@@ -15,6 +15,8 @@ export class NetClient {
     this.players = new Map();        // id -> {name, prev:{x,y}, curr:{x,y}, tCurr, direction, hasFlag}
     this.flag = null;                // {x, y, status, carrierId}
     this.names = new Map();
+    this.lastDir = DIRECTION.NONE;   // resent as keepalive (§22.1)
+    this._keepalive = null;
     this._h = {};
   }
 
@@ -25,7 +27,7 @@ export class NetClient {
     this.ws = new WebSocket(url);
     this.ws.binaryType = "arraybuffer";
     this.ws.onopen = () => { this._emit("open"); this.send({ type: "JOIN", name }); };
-    this.ws.onclose = () => this._emit("close");
+    this.ws.onclose = () => { clearInterval(this._keepalive); this._keepalive = null; this._emit("close"); };
     this.ws.onerror = () => this._emit("neterror");
     this.ws.onmessage = (e) => {
       let m; try { m = decode(new Uint8Array(e.data)); } catch (err) { this._emit("log", `decode error: ${err.message}`); return; }
@@ -34,13 +36,18 @@ export class NetClient {
   }
   disconnect() { this.ws && this.ws.close(); }
   send(msg) { if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(encode(msg)); }
-  sendInput(direction) { if (this.myId != null) this.send({ type: "INPUT", playerId: this.myId, direction }); }
+  sendInput(direction) { this.lastDir = direction; if (this.myId != null) this.send({ type: "INPUT", playerId: this.myId, direction }); }
   sendInteract() { if (this.myId != null) this.send({ type: "INTERACT", playerId: this.myId }); }
   nameOf(id) { return this.names.get(id) || `P${id}`; }
 
   _handle(m) {
     switch (m.type) {
-      case "JOIN_ACCEPTED": this.myId = m.playerId; this._emit("joined", m); break;
+      case "JOIN_ACCEPTED":
+        this.myId = m.playerId;
+        // resend current INPUT every 2s so we're not idle-dropped (even in lobby)
+        clearInterval(this._keepalive);
+        this._keepalive = setInterval(() => this.send({ type: "INPUT", playerId: this.myId, direction: this.lastDir }), 2000);
+        this._emit("joined", m); break;
       case "LOBBY_STATE":
         this.matchState = m.state; m.players.forEach((p) => this.names.set(p.playerId, p.name));
         this._emit("lobby", m); break;

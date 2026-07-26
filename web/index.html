@@ -76,10 +76,10 @@ net.on("close", () => { setConnected(false); log("connection closed"); overlay("
 net.on("neterror", () => log("socket error (is the bridge running?)"));
 net.on("log", (s) => log(s));
 net.on("event", (s) => log(s));
-net.on("joined", (m) => { log(`joined as P${m.playerId}`); overlay("Waiting…", "waiting for the match to start"); });
+net.on("joined", (m) => { log(`joined as P${m.playerId}`); overlay("Lobby", "waiting for the host to start…"); });
 net.on("lobby", (m) => {
   const list = m.players.map((p) => p.name).join(", ");
-  if (net.matchState === MATCH_STATE.WAITING) overlay("Lobby", `players: ${list || "—"}`);
+  if (net.matchState === MATCH_STATE.WAITING) overlay("Lobby", `waiting for the host to start · ${m.players.length} player(s): ${list || "—"}`);
 });
 net.on("countdown", (n) => overlay(String(n), "get ready"));
 net.on("started", () => { hideOverlay(); log("match started"); });

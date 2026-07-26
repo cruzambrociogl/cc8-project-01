@@ -20,7 +20,7 @@ game visuals and some networking niceties are not done yet.
 | Bridge (browser ↔ TCP server, binary) | ✅ works |
 | Cross-machine over Tailscale (Mac server ↔ Windows VM client) | ✅ confirmed |
 | **Phaser rendered client** (map, circle, flag, players, keyboard, smoothing) | ✅ **done (Phase 1)** — `web/net.js` + `web/game.js` |
-| Lobby / countdown / winner overlays (client) | ✅ done · host-controlled start still ❌ (server auto-starts) |
+| Lobby / host-controlled start / countdown / winner | ✅ **done (Phase 2)** — host presses ENTER; idle-timeout keepalive (§22.1) |
 | **UDP server discovery** (§19) | ❌ not started (we connect manually for now) |
 | Cross-team interop (vs another group's server) | ❌ not tested yet |
 | Client-side prediction (§31, optional) | ❌ not started |
@@ -72,12 +72,14 @@ wire format, change it there and nowhere else, and re-run `npm test`.**
 
 ```bash
 npm install                          # once (pulls in `ws`)
-node server.js 5100 1 2              # authority (min-players=1 so you can test solo)
+node server.js 5100                  # authority — host-controlled: press ENTER to start
 node bridge.js 127.0.0.1 5100 8080   # bridge for a browser player
 npm run web                          # web UI at http://localhost:5173
 ```
 
-Open `http://localhost:5173`, bridge `ws://localhost:8080`, **Connect & join**.
+Open `http://localhost:5173`, bridge `ws://localhost:8080`, **Connect & join**,
+then **press ENTER in the server terminal** to start the match. (For unattended
+testing, `node server.js 5100 1` auto-starts as soon as 1 player joins.)
 For a second player: run another bridge on `8081` and open a second tab, or run
 `node bot.js Bot 127.0.0.1 5100`.
 
@@ -98,14 +100,12 @@ Phase 1 (Phaser rendering + keyboard input + snapshot interpolation) is **done**
 see `web/net.js` (wire + interpolation) and `web/game.js` (render + input).
 Remaining:
 
-1. **Client-side prediction** (optional, §31): move your own player locally on
-   keypress and reconcile when `GAME_STATE` arrives, for a zero-lag feel.
-2. **Lobby / host-controlled start**: the server auto-starts at N players today;
-   add a host-triggered start. The client already shows lobby/countdown overlays.
-3. **UDP discovery** (§19/§27): add it to the bridge (browsers can't do UDP) so
+1. **UDP discovery** (§19/§27): add it to the bridge (browsers can't do UDP) so
    the UI lists servers instead of typing an IP.
-4. **Cross-team interop**: point our client at another group's server and share
+2. **Cross-team interop**: point our client at another group's server and share
    golden bytes to debug.
+3. **Client-side prediction** (optional, §31): move your own player locally on
+   keypress and reconcile when `GAME_STATE` arrives, for a zero-lag feel.
 
 Rendering notes for `game.js`: coords arrive fixed-point (×100) → use
 `fromFixed()` (done in `net.js`); origin is center; **y grows down**; the

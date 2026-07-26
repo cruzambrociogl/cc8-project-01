@@ -10,13 +10,15 @@ The protocol is in [protocolo/](protocolo/).
 
 ```bash
 npm install                          # once (pulls in `ws`)
-node server.js 5100 1 2              # authority (min-players=1 for solo testing)
+node server.js 5100                  # authority — press ENTER to start the match
 node bridge.js 127.0.0.1 5100 8080   # bridge for a browser player
 npm run web                          # UI at http://localhost:5173
 npm test                             # verify the codec (golden bytes)
 ```
 
-Open `http://localhost:5173`, bridge `ws://localhost:8080`, **Connect & join**.
+Open `http://localhost:5173`, bridge `ws://localhost:8080`, **Connect & join**,
+then **press ENTER in the server terminal** to start. (`node server.js 5100 1`
+auto-starts at 1 player for unattended testing.)
 Second player: another bridge on `8081` + a second tab, or `node bot.js Bot 127.0.0.1 5100`.
 
 ⚠️ Use port **5100** (5000 collides with macOS AirPlay). Cross-machine: point the

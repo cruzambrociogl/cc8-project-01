@@ -19,8 +19,9 @@ import {
 } from "./protocol.js";
 
 const PORT = Number(process.argv[2] ?? 5000);
-const MIN_PLAYERS = Number(process.argv[3] ?? 2);       // auto-start threshold
+const MIN_PLAYERS = Number(process.argv[3] ?? 0);       // 0 = host-controlled (press ENTER); >=1 = auto-start
 const COUNTDOWN = Number(process.argv[4] ?? 3);
+const IDLE_TIMEOUT_MS = Number(process.env.IDLE_TIMEOUT_MS ?? 10000); // §22.1 / B.1
 
 // §21 config (world units). Sent (×100) in GAME_STARTED; clients must read it.
 const CFG = {
@@ -35,6 +36,7 @@ let state = MATCH_STATE.WAITING;
 let tick = 0;
 let nextPlayerId = 1;                                    // B.2: from 1, never reused
 const players = new Map();                               // playerId -> player
+const conns = new Set();                                 // all live connections (for idle sweep)
 const flag = { status: FLAG_STATUS.AVAILABLE, carrierId: 0, x: 0, y: 0 };
 let loop = null;
 
@@ -62,7 +64,11 @@ function spawn() {
 }
 
 function maybeAutoStart() {
-  if (state === MATCH_STATE.WAITING && players.size >= MIN_PLAYERS) startCountdown();
+  if (MIN_PLAYERS >= 1 && state === MATCH_STATE.WAITING && players.size >= MIN_PLAYERS) startCountdown();
+}
+function hostPrompt() {
+  if (state === MATCH_STATE.WAITING && MIN_PLAYERS < 1)
+    log(`  ${players.size} player(s) in lobby — press ENTER to start`);
 }
 
 function startCountdown() {
@@ -180,6 +186,7 @@ function handle(conn, msg) {
       sendLobby();
       log(`+ P${id} "${name}" joined (${players.size} online)`);
       maybeAutoStart();
+      hostPrompt();
       break;
     }
     case "INPUT": {
@@ -202,7 +209,7 @@ function dropConn(conn) {
   if (id != null && players.delete(id)) {
     if (flag.status === FLAG_STATUS.CARRIED && flag.carrierId === id) { flag.status = FLAG_STATUS.DROPPED; flag.carrierId = 0; }
     broadcast({ type: "PLAYER_DISCONNECTED", playerId: id });
-    if (state === MATCH_STATE.WAITING) sendLobby();
+    if (state === MATCH_STATE.WAITING) { sendLobby(); hostPrompt(); }
     log(`- P${id} left (${players.size} online)`);
   }
 }
@@ -210,9 +217,11 @@ function dropConn(conn) {
 // --- connection lifecycle -----------------------------------------------------
 const server = net.createServer((socket) => {
   socket.setNoDelay(true);
-  const conn = { socket, playerId: null, framer: new StreamFramer() };
+  const conn = { socket, playerId: null, framer: new StreamFramer(), lastSeen: Date.now() };
+  conns.add(conn);
 
   socket.on("data", (chunk) => {
+    conn.lastSeen = Date.now();                          // any byte keeps the connection alive (§22.1)
     let bodies;
     try { bodies = conn.framer.push(new Uint8Array(chunk)); }
     catch { send(socket, { type: "ERROR", code: ERROR_CODE.INVALID_ENCODING, description: "" }); socket.destroy(); return; }
@@ -226,13 +235,28 @@ const server = net.createServer((socket) => {
       handle(conn, msg);
     }
   });
-  socket.on("close", () => dropConn(conn));
-  socket.on("error", () => dropConn(conn));
+  const cleanup = () => { conns.delete(conn); dropConn(conn); };
+  socket.on("close", cleanup);
+  socket.on("error", cleanup);
 });
 
-// §20: host starts locally. Auto-start on MIN_PLAYERS, or press Enter to force.
+// §22.1 / B.1: drop connections that go silent (dead-but-open sockets).
+setInterval(() => {
+  const now = Date.now();
+  for (const c of conns) {
+    if (now - c.lastSeen > IDLE_TIMEOUT_MS) {
+      log(`  idle timeout, dropping ${c.playerId != null ? `P${c.playerId}` : "unjoined conn"}`);
+      c.socket.destroy();
+    }
+  }
+}, 1000);
+
+// §20: the host (server operator) starts the match locally by pressing ENTER.
 process.stdin.on("data", () => startCountdown());
 
 server.listen(PORT, "0.0.0.0", () => {
-  log(`v3 binary server on 0.0.0.0:${PORT}  (auto-start at ${MIN_PLAYERS} players, or press Enter)`);
+  log(`v3 binary server on 0.0.0.0:${PORT}`);
+  log(MIN_PLAYERS >= 1
+    ? `  auto-start at ${MIN_PLAYERS} player(s) — or press ENTER`
+    : `  host-controlled: press ENTER to start the match when players have joined`);
 });
