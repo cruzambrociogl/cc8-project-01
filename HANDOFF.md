@@ -19,6 +19,7 @@ game visuals and some networking niceties are not done yet.
 | Server + game loop (movement, flag, steal, victory) | ✅ works (minimal, not polished) |
 | Bridge (browser ↔ TCP server, binary) | ✅ works |
 | Cross-machine over Tailscale (Mac server ↔ Windows VM client) | ✅ confirmed |
+| **Host / spectator view** (§4 — server shows the game, host doesn't play) | ✅ done — `web/spectator.html` ← server WS :5200 |
 | **Phaser rendered client** (map, circle, flag, players, keyboard, smoothing) | ✅ **done (Phase 1)** — `web/net.js` + `web/game.js` |
 | Lobby / host-controlled start / countdown / winner | ✅ **done (Phase 2)** — host presses ENTER; idle-timeout keepalive (§22.1) |
 | **UDP server discovery** (§19) | ✅ **done (Phase 3)** — bridge broadcasts, UI lists servers; manual host/port fallback |
@@ -84,6 +85,10 @@ In the browser at `http://localhost:5173`:
 3. **Press ENTER in the server terminal** to start the match.
 
 Second player: another bridge on `8081` + a second tab, or `node bot.js Bot 127.0.0.1 5100`.
+
+**Host view (§4):** on the machine running the server, open
+`http://localhost:5173/spectator.html` → **Watch** (connects to `ws://localhost:5200`).
+The host watches the match read-only, without being a player.
 
 - ⚠️ **Use port 5100, not 5000** — 5000 is taken by macOS AirPlay Receiver.
 - **Discovery** uses UDP broadcast (port 5001). It works on a real LAN and over

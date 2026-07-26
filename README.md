@@ -20,6 +20,9 @@ In the browser (`http://localhost:5173`): Bridge `ws://localhost:8080` → **Con
 bridge** → **Find servers** (or type Host/Port) → set Name → **Join** → **press
 ENTER in the server terminal** to start.
 
+**Host view (§4):** on the server machine, open `http://localhost:5173/spectator.html`
+→ **Watch** (`ws://localhost:5200`). The host watches the match without playing.
+
 - ⚠️ Use port **5100** (5000 = macOS AirPlay). Discovery uses UDP broadcast (5001):
   works on a LAN and over **Radmin VPN**; over Tailscale, enter the IP manually.
 - Second player: another bridge on `8081` + a second tab, or `node bot.js Bot 127.0.0.1 5100`.

@@ -13,6 +13,7 @@
 
 import net from "node:net";
 import dgram from "node:dgram";
+import { WebSocketServer } from "ws";
 import {
   encode, decode, frame, StreamFramer, DecodeError,
   MSG, DIRECTION, FLAG_STATUS, MATCH_STATE, REJECT_REASON, GAME_OVER_REASON, ERROR_CODE,
@@ -20,14 +21,16 @@ import {
 } from "./protocol.js";
 
 const PORT = Number(process.argv[2] ?? 5000);
-const MIN_PLAYERS = Number(process.argv[3] ?? 0);       // 0 = host-controlled (press ENTER); >=1 = auto-start
-const COUNTDOWN = Number(process.argv[4] ?? 3);
+const SERVER_NAME = process.argv[3] ?? process.env.SERVER_NAME ?? "demo-team9"; // node server.js <port> "<name>"
+const MIN_PLAYERS = Number(process.env.MIN_PLAYERS ?? 0); // 0 = host-controlled (press ENTER); >=1 = auto-start
+const COUNTDOWN = Number(process.env.COUNTDOWN ?? 3);
 const IDLE_TIMEOUT_MS = Number(process.env.IDLE_TIMEOUT_MS ?? 10000); // §22.1 / B.1
 const DISCOVERY_PORT = Number(process.env.DISCOVERY_PORT ?? 5001);    // §19 UDP
+const SPECTATE_PORT = Number(process.env.SPECTATE_PORT ?? 5200);      // §4 host view (WS)
 
 // §21 config (world units). Sent (×100) in GAME_STARTED; clients must read it.
 const CFG = {
-  gameId: 1, serverName: "demo-team9", maximumPlayers: 100,
+  gameId: 1, serverName: SERVER_NAME, maximumPlayers: 100,
   mapSize: 2000, circleRadius: 500, playerRadius: 15, spawnMargin: 80,
   playerSpeed: 220, interactionRadius: 60, tickIntervalMs: 50,
 };
@@ -39,6 +42,7 @@ let tick = 0;
 let nextPlayerId = 1;                                    // B.2: from 1, never reused
 const players = new Map();                               // playerId -> player
 const conns = new Set();                                 // all live connections (for idle sweep)
+const spectators = new Set();                            // §4 host-view WebSocket clients
 const flag = { status: FLAG_STATUS.AVAILABLE, carrierId: 0, x: 0, y: 0 };
 let loop = null;
 
@@ -48,16 +52,16 @@ const log = (...a) => console.log(...a);
 function send(sock, msg) { sock.write(frame(encode(msg))); }
 function broadcast(msg, exceptId = null) {
   for (const p of players.values()) if (p.id !== exceptId && p.socket.writable) send(p.socket, msg);
+  specBroadcast(msg);                                    // host view sees everything players see
+}
+function specBroadcast(msg) {
+  const b = encode(msg);                                 // WS is message-framed: send the body, no length prefix
+  for (const ws of spectators) if (ws.readyState === ws.OPEN) ws.send(b);
 }
 const worldDist = (ax, ay, bx, by) => Math.hypot(fromFixed(ax - bx), fromFixed(ay - by));
 
 // --- lobby / start ------------------------------------------------------------
-function sendLobby() {
-  broadcast({
-    type: "LOBBY_STATE", state,
-    players: [...players.values()].map((p) => ({ playerId: p.id, name: p.name })),
-  });
-}
+function sendLobby() { broadcast(lobbyMsg()); }
 
 function spawn() {
   const a = Math.random() * Math.PI * 2;
@@ -87,19 +91,35 @@ function startCountdown() {
   tickDown();
 }
 
-function startMatch() {
-  for (const p of players.values()) { const s = spawn(); p.x = s.x; p.y = s.y; p.direction = DIRECTION.NONE; p.hasFlag = false; }
-  flag.status = FLAG_STATUS.AVAILABLE; flag.carrierId = 0; flag.x = 0; flag.y = 0;
-  state = MATCH_STATE.RUNNING; tick = 0;
-  broadcast({
+function buildGameStarted() {
+  return {
     type: "GAME_STARTED",
     mapSize: toFixed(CFG.mapSize), circleRadius: toFixed(CFG.circleRadius), playerRadius: toFixed(CFG.playerRadius),
     playerSpeed: toFixed(CFG.playerSpeed), interactionRadius: toFixed(CFG.interactionRadius), tickIntervalMs: CFG.tickIntervalMs,
     flagStatus: flag.status, flagCarrierId: flag.carrierId, flagX: flag.x, flagY: flag.y,
     players: [...players.values()].map((p) => ({ playerId: p.id, name: p.name, x: p.x, y: p.y, direction: p.direction, hasFlag: p.hasFlag })),
-  });
+  };
+}
+function lobbyMsg() {
+  return { type: "LOBBY_STATE", state, players: [...players.values()].map((p) => ({ playerId: p.id, name: p.name })) };
+}
+
+function startMatch() {
+  for (const p of players.values()) { const s = spawn(); p.x = s.x; p.y = s.y; p.direction = DIRECTION.NONE; p.hasFlag = false; }
+  flag.status = FLAG_STATUS.AVAILABLE; flag.carrierId = 0; flag.x = 0; flag.y = 0;
+  state = MATCH_STATE.RUNNING; tick = 0;
+  broadcast(buildGameStarted());
   log(`state -> RUNNING, ${players.size} players, step=${STEP_FIXED} fixed/tick`);
   loop = setInterval(runTick, CFG.tickIntervalMs);
+}
+
+function resetToLobby() {
+  if (loop) { clearInterval(loop); loop = null; }
+  state = MATCH_STATE.WAITING; tick = 0;
+  flag.status = FLAG_STATUS.AVAILABLE; flag.carrierId = 0; flag.x = 0; flag.y = 0;
+  for (const p of players.values()) { p.hasFlag = false; p.direction = DIRECTION.NONE; p.wantsInteract = false; }
+  sendLobby();
+  log(`state -> WAITING (reset to lobby, ${players.size} players)`);
 }
 
 // --- the §30 tick cycle -------------------------------------------------------
@@ -269,11 +289,33 @@ udp.on("message", (buf, rinfo) => {
 udp.on("error", (e) => log(`  UDP discovery error: ${e.message}`));
 udp.bind(DISCOVERY_PORT, () => { try { udp.setBroadcast(true); } catch {} log(`  UDP discovery listening on ${DISCOVERY_PORT}`); });
 
+// §4: host view. A spectator WebSocket that streams the authoritative state so the
+// host can WATCH the match (not play). Reuses the same messages the players get.
+// Bound to 127.0.0.1: only THIS machine (the host) can watch and control.
+new WebSocketServer({ port: SPECTATE_PORT, host: "127.0.0.1" }).on("connection", (ws) => {
+  spectators.add(ws);
+  // send current context so a spectator connecting mid-match can render immediately
+  if (state === MATCH_STATE.RUNNING || state === MATCH_STATE.FINISHED) {
+    specBroadcastTo(ws, buildGameStarted());
+    specBroadcastTo(ws, gameStateMsg());
+  } else specBroadcastTo(ws, lobbyMsg());
+  ws.on("message", (data, isBinary) => {                // host controls from the spectator UI
+    if (isBinary) return;
+    let c; try { c = JSON.parse(data.toString()); } catch { return; }
+    if (c.cmd === "start") startCountdown();
+    else if (c.cmd === "reset") resetToLobby();
+  });
+  ws.on("close", () => spectators.delete(ws));
+  ws.on("error", () => spectators.delete(ws));
+});
+function specBroadcastTo(ws, msg) { if (ws.readyState === ws.OPEN) ws.send(encode(msg)); }
+
 // §20: the host (server operator) starts the match locally by pressing ENTER.
 process.stdin.on("data", () => startCountdown());
 
 server.listen(PORT, "0.0.0.0", () => {
-  log(`v3 binary server on 0.0.0.0:${PORT}`);
+  log(`v3 binary server "${CFG.serverName}" on 0.0.0.0:${PORT}`);
+  log(`  host view (spectator): open the web UI at /spectator.html -> ws://localhost:${SPECTATE_PORT}`);
   log(MIN_PLAYERS >= 1
     ? `  auto-start at ${MIN_PLAYERS} player(s) — or press ENTER`
     : `  host-controlled: press ENTER to start the match when players have joined`);

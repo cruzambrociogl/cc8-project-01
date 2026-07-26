@@ -36,10 +36,26 @@ export class NetClient {
       this._handle(m);
     };
   }
+  // §4 host view: connect directly to a server's spectator WS and just render its
+  // state. No bridge, no JOIN — myId stays null so the renderer shows no "you".
+  spectate(url) {
+    this.ws = new WebSocket(url);
+    this.ws.binaryType = "arraybuffer";
+    this.ws.onopen = () => this._emit("bridgeOpen");
+    this.ws.onclose = () => this._emit("close");
+    this.ws.onerror = () => this._emit("neterror");
+    this.ws.onmessage = (e) => {
+      if (typeof e.data === "string") return;
+      let m; try { m = decode(new Uint8Array(e.data)); } catch { return; }
+      this._handle(m);
+    };
+  }
   disconnect() { this.ws && this.ws.close(); }
 
   _ctl(obj) { if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj)); }
   discover() { this._ctl({ t: "discover" }); }
+  hostStart() { this._ctl({ cmd: "start" }); }          // §4 host control (over the spectator WS)
+  hostReset() { this._ctl({ cmd: "reset" }); }
   joinServer(host, port, name) { this._name = name; this._ctl({ t: "connect", host, port: Number(port) }); }
   _stopKeepalive() { clearInterval(this._keepalive); this._keepalive = null; }
   _control(c) {

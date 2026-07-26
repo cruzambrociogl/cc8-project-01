@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CTF-GRID v3 — host view</title>
+<script src="/vendor/phaser.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem; background: #0b0f17; color: #e5e7eb; }
+  .wrap { max-width: 720px; margin-inline: auto; }
+  h1 { font-size: 1rem; margin: 0 0 .8rem; color: #94a3b8; font-weight: 600; }
+  .bar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: .6rem; }
+  input { font: inherit; padding: .35rem .5rem; border-radius: 6px; border: 1px solid #334155; background: #111827; color: inherit; }
+  button { font: inherit; padding: .4rem .9rem; border-radius: 6px; cursor: pointer; border: 1px solid #334155; background: #1e293b; color: inherit; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  #stage { position: relative; width: 700px; max-width: 96vw; aspect-ratio: 1; margin-inline: auto; margin-top: .4rem; }
+  #game { width: 100%; height: 100%; }
+  #overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+             text-align: center; background: rgba(11,15,23,.72); border-radius: 10px; gap: .4rem; }
+  #overlay.hidden { display: none; }
+  #overlayBig { font-size: 2.2rem; font-weight: 700; }
+  #overlaySub { color: #94a3b8; }
+  .hint { color: #64748b; font-size: 12.5px; margin: .6rem 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CTF-GRID v3 — host view (spectator, §4)</h1>
+
+  <div class="bar">
+    <label>Server spectator <input id="url" value="ws://localhost:5200" size="22" /></label>
+    <button id="watch">Watch</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="start" disabled>▶ Start match</button>
+    <button id="reset" disabled>↻ New match</button>
+    <span id="status" style="color:#94a3b8">not watching</span>
+  </div>
+
+  <div id="stage">
+    <div id="game"></div>
+    <div id="overlay"><div id="overlayBig">Host view</div><div id="overlaySub">Watch this machine's server. Press ENTER in the server terminal to start.</div></div>
+  </div>
+
+  <p class="hint">This is a read-only overhead view of the match — the host does not play (§4).
+    Players connect through their own bridges; the host just watches here.</p>
+</div>
+
+<script type="module">
+import { NetClient, MATCH_STATE } from "/net.js";
+import { startGame } from "/game.js";
+
+const $ = (s) => document.querySelector(s);
+const net = new NetClient();          // myId stays null -> renders as pure spectator
+startGame(net);
+
+const ov = { box: $("#overlay"), big: $("#overlayBig"), sub: $("#overlaySub") };
+const overlay = (b, s = "") => { ov.box.classList.remove("hidden"); ov.big.textContent = b; ov.sub.textContent = s; };
+const hide = () => ov.box.classList.add("hidden");
+let watching = false;
+// Start enabled only in lobby; New-match enabled only after a match ends.
+function controls() {
+  $("#start").disabled = !(watching && net.matchState === MATCH_STATE.WAITING);
+  $("#reset").disabled = !(watching && net.matchState === MATCH_STATE.FINISHED);
+}
+
+net.on("bridgeOpen", () => { watching = true; $("#status").textContent = "watching"; $("#watch").disabled = true; $("#stop").disabled = false; overlay("Waiting for match…", "press ▶ Start match when players have joined"); controls(); });
+net.on("close", () => { watching = false; $("#status").textContent = "not watching"; $("#watch").disabled = false; $("#stop").disabled = true; overlay("Stopped"); controls(); });
+net.on("neterror", () => overlay("Can't reach server", "is the server running on this machine?"));
+net.on("lobby", (m) => { if (net.matchState === MATCH_STATE.WAITING) overlay("Lobby", `${m.players.length} player(s): ${m.players.map((p) => p.name).join(", ") || "—"}`); controls(); });
+net.on("countdown", (n) => { overlay(String(n), "starting"); controls(); });
+net.on("started", () => { hide(); controls(); });
+net.on("over", (m) => { overlay(`${m.winnerName} wins 🏁`, "press ↻ New match to play again"); controls(); });
+
+$("#watch").onclick = () => { overlay("Connecting…"); net.spectate($("#url").value.trim()); };
+$("#stop").onclick = () => net.disconnect();
+$("#start").onclick = () => net.hostStart();
+$("#reset").onclick = () => net.hostReset();
+</script>
+</body>
+</html>
