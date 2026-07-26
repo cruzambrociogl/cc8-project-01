@@ -12,6 +12,7 @@
 // enmiendas B.3).
 
 import net from "node:net";
+import dgram from "node:dgram";
 import {
   encode, decode, frame, StreamFramer, DecodeError,
   MSG, DIRECTION, FLAG_STATUS, MATCH_STATE, REJECT_REASON, GAME_OVER_REASON, ERROR_CODE,
@@ -22,10 +23,11 @@ const PORT = Number(process.argv[2] ?? 5000);
 const MIN_PLAYERS = Number(process.argv[3] ?? 0);       // 0 = host-controlled (press ENTER); >=1 = auto-start
 const COUNTDOWN = Number(process.argv[4] ?? 3);
 const IDLE_TIMEOUT_MS = Number(process.env.IDLE_TIMEOUT_MS ?? 10000); // §22.1 / B.1
+const DISCOVERY_PORT = Number(process.env.DISCOVERY_PORT ?? 5001);    // §19 UDP
 
 // §21 config (world units). Sent (×100) in GAME_STARTED; clients must read it.
 const CFG = {
-  gameId: 1, serverName: "demo-team9",
+  gameId: 1, serverName: "demo-team9", maximumPlayers: 100,
   mapSize: 2000, circleRadius: 500, playerRadius: 15, spawnMargin: 80,
   playerSpeed: 220, interactionRadius: 60, tickIntervalMs: 50,
 };
@@ -176,6 +178,7 @@ function handle(conn, msg) {
     case "JOIN": {
       if (conn.playerId != null) return; // ignore duplicate join
       if (state !== MATCH_STATE.WAITING) { send(conn.socket, { type: "JOIN_REJECTED", reason: REJECT_REASON.GAME_ALREADY_STARTED }); conn.socket.destroy(); return; }
+      if (players.size >= CFG.maximumPlayers) { send(conn.socket, { type: "JOIN_REJECTED", reason: REJECT_REASON.GAME_FULL }); conn.socket.destroy(); return; }
       const name = (msg.name ?? "").trim();
       const nameBytes = new TextEncoder().encode(name).length;              // A.2: bytes
       if (nameBytes < 1 || nameBytes > 20) { send(conn.socket, { type: "JOIN_REJECTED", reason: REJECT_REASON.INVALID_NAME }); conn.socket.destroy(); return; }
@@ -250,6 +253,21 @@ setInterval(() => {
     }
   }
 }, 1000);
+
+// §19: UDP discovery. Answer DISCOVER_REQUEST only while WAITING, unicast back to
+// the sender (its IP comes from the datagram, not the message — §27.2).
+const udp = dgram.createSocket({ type: "udp4", reuseAddr: true });
+udp.on("message", (buf, rinfo) => {
+  let m; try { m = decode(new Uint8Array(buf)); } catch { return; }
+  if (m.type !== "DISCOVER_REQUEST" || state !== MATCH_STATE.WAITING) return;
+  const body = encode({
+    type: "DISCOVER_RESPONSE", gameId: CFG.gameId, serverName: CFG.serverName,
+    tcpPort: PORT, state, playerCount: players.size, maximumPlayers: CFG.maximumPlayers,
+  });
+  udp.send(body, rinfo.port, rinfo.address);            // UDP datagram = one message, no length prefix (§23.3)
+});
+udp.on("error", (e) => log(`  UDP discovery error: ${e.message}`));
+udp.bind(DISCOVERY_PORT, () => { try { udp.setBroadcast(true); } catch {} log(`  UDP discovery listening on ${DISCOVERY_PORT}`); });
 
 // §20: the host (server operator) starts the match locally by pressing ENTER.
 process.stdin.on("data", () => startCountdown());

@@ -42,10 +42,10 @@ and §5 for what to build next (Phaser rendering is the biggest piece).
 ```bash
 npm install                          # once
 npm test                             # codec golden-byte / round-trip checks
-node server.js 5100 1 2              # server (port 5100 — 5000 is macOS AirPlay)
-node bridge.js 127.0.0.1 5100 8080   # bridge for a browser player
+node server.js 5100                  # server, press ENTER to start (5000 = macOS AirPlay)
+node bridge.js 8080                  # bridge: WS 8080 + UDP discovery 5001 (browser picks server)
 npm run web                          # UI at http://localhost:5173
-node bot.js Bot 127.0.0.1 5100       # headless test player
+node bot.js Bot 127.0.0.1 5100       # headless test player (raw TCP, no bridge)
 ```
 
 ## Notes

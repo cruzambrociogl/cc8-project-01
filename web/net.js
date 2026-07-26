@@ -23,18 +23,31 @@ export class NetClient {
   on(ev, fn) { (this._h[ev] ||= []).push(fn); return this; }
   _emit(ev, ...a) { (this._h[ev] || []).forEach((f) => f(...a)); }
 
-  connect(url, name) {
+  // Connect to the BRIDGE (not a game server yet). Then discover() and/or joinServer().
+  connect(url) {
     this.ws = new WebSocket(url);
     this.ws.binaryType = "arraybuffer";
-    this.ws.onopen = () => { this._emit("open"); this.send({ type: "JOIN", name }); };
-    this.ws.onclose = () => { clearInterval(this._keepalive); this._keepalive = null; this._emit("close"); };
+    this.ws.onopen = () => this._emit("bridgeOpen");
+    this.ws.onclose = () => { this._stopKeepalive(); this._emit("close"); };
     this.ws.onerror = () => this._emit("neterror");
     this.ws.onmessage = (e) => {
-      let m; try { m = decode(new Uint8Array(e.data)); } catch (err) { this._emit("log", `decode error: ${err.message}`); return; }
+      if (typeof e.data === "string") { try { this._control(JSON.parse(e.data)); } catch {} return; } // bridge control (text)
+      let m; try { m = decode(new Uint8Array(e.data)); } catch (err) { this._emit("log", `decode error: ${err.message}`); return; } // game (binary)
       this._handle(m);
     };
   }
   disconnect() { this.ws && this.ws.close(); }
+
+  _ctl(obj) { if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj)); }
+  discover() { this._ctl({ t: "discover" }); }
+  joinServer(host, port, name) { this._name = name; this._ctl({ t: "connect", host, port: Number(port) }); }
+  _stopKeepalive() { clearInterval(this._keepalive); this._keepalive = null; }
+  _control(c) {
+    if (c.t === "servers") this._emit("servers", c.list);
+    else if (c.t === "connected") { this._emit("serverConnected", c); this.send({ type: "JOIN", name: this._name }); }
+    else if (c.t === "connect_error") this._emit("log", `connect failed: ${c.error}`);
+    else if (c.t === "disconnected") { this._stopKeepalive(); this._emit("serverClosed"); }
+  }
   send(msg) { if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(encode(msg)); }
   sendInput(direction) { this.lastDir = direction; if (this.myId != null) this.send({ type: "INPUT", playerId: this.myId, direction }); }
   sendInteract() { if (this.myId != null) this.send({ type: "INTERACT", playerId: this.myId }); }
@@ -45,7 +58,7 @@ export class NetClient {
       case "JOIN_ACCEPTED":
         this.myId = m.playerId;
         // resend current INPUT every 2s so we're not idle-dropped (even in lobby)
-        clearInterval(this._keepalive);
+        this._stopKeepalive();
         this._keepalive = setInterval(() => this.send({ type: "INPUT", playerId: this.myId, direction: this.lastDir }), 2000);
         this._emit("joined", m); break;
       case "LOBBY_STATE":

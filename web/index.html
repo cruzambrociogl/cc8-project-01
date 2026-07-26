@@ -10,11 +10,11 @@
   body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1rem; background: #0b0f17; color: #e5e7eb; }
   .wrap { max-width: 720px; margin-inline: auto; }
   h1 { font-size: 1rem; margin: 0 0 .8rem; color: #94a3b8; font-weight: 600; }
-  .bar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: .8rem; }
-  input { font: inherit; padding: .35rem .5rem; border-radius: 6px; border: 1px solid #334155; background: #111827; color: inherit; }
+  .bar { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: .6rem; }
+  input, select { font: inherit; padding: .35rem .5rem; border-radius: 6px; border: 1px solid #334155; background: #111827; color: inherit; }
   button { font: inherit; padding: .4rem .9rem; border-radius: 6px; cursor: pointer; border: 1px solid #334155; background: #1e293b; color: inherit; }
   button:disabled { opacity: .4; cursor: not-allowed; }
-  #stage { position: relative; width: 700px; max-width: 96vw; aspect-ratio: 1; margin-inline: auto; }
+  #stage { position: relative; width: 700px; max-width: 96vw; aspect-ratio: 1; margin-inline: auto; margin-top: .4rem; }
   #game { width: 100%; height: 100%; }
   #overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
              text-align: center; background: rgba(11,15,23,.72); border-radius: 10px; gap: .4rem; }
@@ -23,30 +23,39 @@
   #overlaySub { color: #94a3b8; }
   .hint { color: #64748b; font-size: 12.5px; margin: .6rem 0; }
   #log { font: 12px/1.5 ui-monospace, monospace; background: #0d1424; border: 1px solid #1e293b; border-radius: 8px;
-         padding: .5rem .7rem; height: 120px; overflow-y: auto; margin-top: .8rem; }
+         padding: .5rem .7rem; height: 110px; overflow-y: auto; margin-top: .8rem; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>CTF-GRID v3 — game (Phase 1)</h1>
+  <h1>CTF-GRID v3 — game (Phase 3: discovery)</h1>
 
   <div class="bar">
-    <label>Bridge <input id="url" value="ws://localhost:8080" size="22" /></label>
-    <label>Name <input id="name" value="Cruz" size="10" maxlength="20" /></label>
-    <button id="connect">Connect &amp; join</button>
+    <label>Bridge <input id="url" value="ws://localhost:8080" size="20" /></label>
+    <button id="bridgeBtn">Connect bridge</button>
+    <span id="status" style="color:#94a3b8">not connected to bridge</span>
+  </div>
+
+  <div class="bar" id="serverBar" style="display:none">
+    <button id="find">Find servers</button>
+    <select id="servers"><option value="">— discovered servers —</option></select>
+    <span style="color:#64748b">or</span>
+    <label>Host <input id="host" value="127.0.0.1" size="11" /></label>
+    <label>Port <input id="port" value="5100" size="5" /></label>
+    <label>Name <input id="name" value="Cruz" size="8" maxlength="20" /></label>
+    <button id="join">Join</button>
     <button id="disconnect" disabled>Disconnect</button>
-    <span id="status" style="color:#94a3b8"></span>
   </div>
 
   <div id="stage">
     <div id="game"></div>
     <div id="overlay">
       <div id="overlayBig">Not connected</div>
-      <div id="overlaySub">Enter a bridge address and join.</div>
+      <div id="overlaySub">Connect to your bridge, then find or enter a server.</div>
     </div>
   </div>
 
-  <p class="hint">Move: arrows or WASD · Grab / steal the flag: Space or E · Carry it fully outside the circle to win.</p>
+  <p class="hint">Move: arrows or WASD · Grab / steal: Space or E · Carry the flag fully outside the circle to win.</p>
   <div id="log"></div>
 </div>
 
@@ -61,40 +70,35 @@ startGame(net);
 const ov = { box: $("#overlay"), big: $("#overlayBig"), sub: $("#overlaySub") };
 function overlay(big, sub = "") { ov.box.classList.remove("hidden"); ov.big.textContent = big; ov.sub.textContent = sub; }
 function hideOverlay() { ov.box.classList.add("hidden"); }
-function log(s) {
-  const d = document.createElement("div");
-  d.textContent = `${new Date().toLocaleTimeString()}  ${s}`;
-  $("#log").appendChild(d); $("#log").scrollTop = $("#log").scrollHeight;
-}
-function setConnected(on) {
-  $("#connect").disabled = on; $("#disconnect").disabled = !on;
-  $("#status").textContent = on ? "connected" : "disconnected";
-}
+function log(s) { const d = document.createElement("div"); d.textContent = `${new Date().toLocaleTimeString()}  ${s}`; $("#log").appendChild(d); $("#log").scrollTop = $("#log").scrollHeight; }
 
-net.on("open", () => { setConnected(true); log("connected, sent JOIN"); overlay("Joining…"); });
-net.on("close", () => { setConnected(false); log("connection closed"); overlay("Disconnected"); });
-net.on("neterror", () => log("socket error (is the bridge running?)"));
+// --- bridge control ---
+net.on("bridgeOpen", () => { $("#serverBar").style.display = "flex"; $("#status").textContent = "bridge connected — find or enter a server"; $("#bridgeBtn").disabled = true; $("#disconnect").disabled = false; overlay("Bridge ready", "find a server or enter one, then Join"); log("bridge connected"); });
+net.on("close", () => { $("#serverBar").style.display = "none"; $("#status").textContent = "not connected to bridge"; $("#bridgeBtn").disabled = false; $("#disconnect").disabled = true; overlay("Disconnected"); log("bridge closed"); });
+net.on("neterror", () => log("bridge socket error (is bridge.js running on that port?)"));
+net.on("servers", (list) => {
+  const sel = $("#servers");
+  sel.innerHTML = `<option value="">— ${list.length} server(s) —</option>` +
+    list.map((s) => `<option value="${s.host}|${s.port}">${s.name} (${s.players}/${s.max}) @ ${s.host}:${s.port}</option>`).join("");
+  log(`discovery: ${list.length} server(s) found`);
+});
+net.on("serverConnected", (c) => { $("#status").textContent = `connected to ${c.host}:${c.port}`; overlay("Joining…"); log(`connected to server ${c.host}:${c.port}`); });
+net.on("serverClosed", () => { overlay("Server disconnected"); log("server connection closed"); });
+
+// --- game events ---
 net.on("log", (s) => log(s));
 net.on("event", (s) => log(s));
 net.on("joined", (m) => { log(`joined as P${m.playerId}`); overlay("Lobby", "waiting for the host to start…"); });
-net.on("lobby", (m) => {
-  const list = m.players.map((p) => p.name).join(", ");
-  if (net.matchState === MATCH_STATE.WAITING) overlay("Lobby", `waiting for the host to start · ${m.players.length} player(s): ${list || "—"}`);
-});
+net.on("lobby", (m) => { const list = m.players.map((p) => p.name).join(", "); if (net.matchState === MATCH_STATE.WAITING) overlay("Lobby", `waiting for the host · ${m.players.length} player(s): ${list || "—"}`); });
 net.on("countdown", (n) => overlay(String(n), "get ready"));
 net.on("started", () => { hideOverlay(); log("match started"); });
-net.on("over", (m) => {
-  const you = m.winnerId === net.myId;
-  overlay(you ? "You win! 🎉" : `${m.winnerName} wins`, "match over");
-  log(`game over — winner ${m.winnerName} (P${m.winnerId})`);
-});
+net.on("over", (m) => { overlay(m.winnerId === net.myId ? "You win! 🎉" : `${m.winnerName} wins`, "match over"); log(`game over — winner ${m.winnerName} (P${m.winnerId})`); });
 
-$("#connect").onclick = () => {
-  const url = $("#url").value.trim();
-  const name = $("#name").value.trim() || "player";
-  overlay("Connecting…");
-  net.connect(url, name);
-};
+// --- controls ---
+$("#bridgeBtn").onclick = () => { overlay("Connecting to bridge…"); log(`connecting to bridge ${$("#url").value.trim()}`); net.connect($("#url").value.trim()); };
+$("#find").onclick = () => { log("discovering servers…"); net.discover(); };
+$("#servers").onchange = (e) => { const v = e.target.value; if (!v) return; const [h, p] = v.split("|"); $("#host").value = h; $("#port").value = p; };
+$("#join").onclick = () => { const name = $("#name").value.trim() || "player"; overlay("Connecting…"); net.joinServer($("#host").value.trim(), $("#port").value.trim(), name); };
 $("#disconnect").onclick = () => net.disconnect();
 </script>
 </body>

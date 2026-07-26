@@ -21,7 +21,7 @@ game visuals and some networking niceties are not done yet.
 | Cross-machine over Tailscale (Mac server ↔ Windows VM client) | ✅ confirmed |
 | **Phaser rendered client** (map, circle, flag, players, keyboard, smoothing) | ✅ **done (Phase 1)** — `web/net.js` + `web/game.js` |
 | Lobby / host-controlled start / countdown / winner | ✅ **done (Phase 2)** — host presses ENTER; idle-timeout keepalive (§22.1) |
-| **UDP server discovery** (§19) | ❌ not started (we connect manually for now) |
+| **UDP server discovery** (§19) | ✅ **done (Phase 3)** — bridge broadcasts, UI lists servers; manual host/port fallback |
 | Cross-team interop (vs another group's server) | ❌ not tested yet |
 | Client-side prediction (§31, optional) | ❌ not started |
 
@@ -72,21 +72,28 @@ wire format, change it there and nowhere else, and re-run `npm test`.**
 
 ```bash
 npm install                          # once (pulls in `ws`)
-node server.js 5100                  # authority — host-controlled: press ENTER to start
-node bridge.js 127.0.0.1 5100 8080   # bridge for a browser player
+node server.js 5100                  # authority — press ENTER to start (auto-start: node server.js 5100 1)
+node bridge.js 8080                  # bridge: WS 8080, UDP discovery 5001
 npm run web                          # web UI at http://localhost:5173
 ```
 
-Open `http://localhost:5173`, bridge `ws://localhost:8080`, **Connect & join**,
-then **press ENTER in the server terminal** to start the match. (For unattended
-testing, `node server.js 5100 1` auto-starts as soon as 1 player joins.)
-For a second player: run another bridge on `8081` and open a second tab, or run
-`node bot.js Bot 127.0.0.1 5100`.
+In the browser at `http://localhost:5173`:
+1. Bridge `ws://localhost:8080` → **Connect bridge**.
+2. **Find servers** (UDP discovery) and pick one from the dropdown — or type Host
+   `127.0.0.1` / Port `5100` manually — set a Name → **Join**.
+3. **Press ENTER in the server terminal** to start the match.
+
+Second player: another bridge on `8081` + a second tab, or `node bot.js Bot 127.0.0.1 5100`.
 
 - ⚠️ **Use port 5100, not 5000** — 5000 is taken by macOS AirPlay Receiver.
-- **Cross-machine:** the client's bridge points at the server host's IP, e.g.
-  `node bridge.js <server-ip> 5100 8080`. Over Tailscale it just works; allow the
-  firewall prompt on the server side.
+- **Discovery** uses UDP broadcast (port 5001). It works on a real LAN and over
+  **Radmin VPN** (which carries broadcast). It does **not** cross Tailscale — over
+  Tailscale, type the host's Tailscale IP manually. The bridge is generic now: it
+  is NOT tied to a server at launch; the browser chooses the server (discovered or
+  manual).
+- **Cross-machine:** on each machine run `node bridge.js 8080` + `npm run web`;
+  the browser discovers or enters the server host's IP. Allow the firewall prompt
+  on the server side.
 
 **Verify the codec is correct:** `npm test` — all checks must pass, especially the
 golden bytes `11 03 00 07 01` (an INPUT from P07 moving up). If that byte string
@@ -100,11 +107,9 @@ Phase 1 (Phaser rendering + keyboard input + snapshot interpolation) is **done**
 see `web/net.js` (wire + interpolation) and `web/game.js` (render + input).
 Remaining:
 
-1. **UDP discovery** (§19/§27): add it to the bridge (browsers can't do UDP) so
-   the UI lists servers instead of typing an IP.
-2. **Cross-team interop**: point our client at another group's server and share
-   golden bytes to debug.
-3. **Client-side prediction** (optional, §31): move your own player locally on
+1. **Cross-team interop**: point our client at another group's server and share
+   golden bytes to debug. This is what the grade rides on.
+2. **Client-side prediction** (optional, §31): move your own player locally on
    keypress and reconcile when `GAME_STATE` arrives, for a zero-lag feel.
 
 Rendering notes for `game.js`: coords arrive fixed-point (×100) → use
