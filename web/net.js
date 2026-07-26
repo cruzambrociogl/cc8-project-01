@@ -18,6 +18,12 @@ export class NetClient {
     this.lastDir = DIRECTION.NONE;   // resent as keepalive (§22.1)
     this._keepalive = null;
     this._h = {};
+    // A backgrounded tab throttles setInterval; fire an immediate keepalive when
+    // it becomes visible again so we don't miss the server's idle window.
+    if (typeof document !== "undefined")
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && this.myId != null) this.send({ type: "INPUT", playerId: this.myId, direction: this.lastDir });
+      });
   }
 
   on(ev, fn) { (this._h[ev] ||= []).push(fn); return this; }

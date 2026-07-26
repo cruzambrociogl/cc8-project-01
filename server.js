@@ -24,7 +24,7 @@ const PORT = Number(process.argv[2] ?? 5000);
 const SERVER_NAME = process.argv[3] ?? process.env.SERVER_NAME ?? "demo-team9"; // node server.js <port> "<name>"
 const MIN_PLAYERS = Number(process.env.MIN_PLAYERS ?? 0); // 0 = host-controlled (press ENTER); >=1 = auto-start
 const COUNTDOWN = Number(process.env.COUNTDOWN ?? 3);
-const IDLE_TIMEOUT_MS = Number(process.env.IDLE_TIMEOUT_MS ?? 10000); // §22.1 / B.1
+const IDLE_TIMEOUT_MS = Number(process.env.IDLE_TIMEOUT_MS ?? 45000); // §22.1 / B.1 (generous: browsers throttle background-tab timers)
 const DISCOVERY_PORT = Number(process.env.DISCOVERY_PORT ?? 5001);    // §19 UDP
 const SPECTATE_PORT = Number(process.env.SPECTATE_PORT ?? 5200);      // §4 host view (WS)
 
