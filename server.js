@@ -24,7 +24,12 @@ const PORT = Number(process.argv[2] ?? 5000);
 const SERVER_NAME = process.argv[3] ?? process.env.SERVER_NAME ?? "demo-team9"; // node server.js <port> "<name>"
 const MIN_PLAYERS = Number(process.env.MIN_PLAYERS ?? 0); // 0 = host-controlled (press ENTER); >=1 = auto-start
 const COUNTDOWN = Number(process.env.COUNTDOWN ?? 3);
-const IDLE_TIMEOUT_MS = Number(process.env.IDLE_TIMEOUT_MS ?? 45000); // §22.1 / B.1 (generous: browsers throttle background-tab timers)
+// App-level idle timeout is DISABLED by default: the base v3 protocol has no
+// keepalive, and INPUT is only sent on change (§28.2), so a silent client (idle in
+// lobby, or standing still) is perfectly valid. Dropping it kicks other teams'
+// compliant clients. Dead peers are detected via TCP keepalive instead (below).
+// Set IDLE_TIMEOUT_MS>0 only if the class ratifies a client keepalive (enmienda B.1).
+const IDLE_TIMEOUT_MS = Number(process.env.IDLE_TIMEOUT_MS ?? 0);
 const DISCOVERY_PORT = Number(process.env.DISCOVERY_PORT ?? 5001);    // §19 UDP
 const SPECTATE_PORT = Number(process.env.SPECTATE_PORT ?? 5200);      // §4 host view (WS)
 
@@ -240,6 +245,7 @@ function dropConn(conn) {
 // --- connection lifecycle -----------------------------------------------------
 const server = net.createServer((socket) => {
   socket.setNoDelay(true);
+  socket.setKeepAlive(true, 15000);                     // OS-level dead-peer detection, no app traffic needed
   const conn = { socket, playerId: null, framer: new StreamFramer(), lastSeen: Date.now() };
   conns.add(conn);
 
@@ -263,16 +269,19 @@ const server = net.createServer((socket) => {
   socket.on("error", cleanup);
 });
 
-// §22.1 / B.1: drop connections that go silent (dead-but-open sockets).
-setInterval(() => {
-  const now = Date.now();
-  for (const c of conns) {
-    if (now - c.lastSeen > IDLE_TIMEOUT_MS) {
-      log(`  idle timeout, dropping ${c.playerId != null ? `P${c.playerId}` : "unjoined conn"}`);
-      c.socket.destroy();
+// Optional app-level idle drop — OFF unless IDLE_TIMEOUT_MS>0. Only safe if every
+// client keepalives (not guaranteed across teams), so it stays disabled by default.
+if (IDLE_TIMEOUT_MS > 0) {
+  setInterval(() => {
+    const now = Date.now();
+    for (const c of conns) {
+      if (now - c.lastSeen > IDLE_TIMEOUT_MS) {
+        log(`  idle timeout, dropping ${c.playerId != null ? `P${c.playerId}` : "unjoined conn"}`);
+        c.socket.destroy();
+      }
     }
-  }
-}, 1000);
+  }, 1000);
+}
 
 // §19: UDP discovery. Answer DISCOVER_REQUEST only while WAITING, unicast back to
 // the sender (its IP comes from the datagram, not the message — §27.2).

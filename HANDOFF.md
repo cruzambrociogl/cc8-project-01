@@ -21,7 +21,7 @@ game visuals and some networking niceties are not done yet.
 | Cross-machine over Tailscale (Mac server ↔ Windows VM client) | ✅ confirmed |
 | **Host / spectator view** (§4 — server shows the game, host doesn't play) | ✅ done — `web/spectator.html` ← server WS :5200 |
 | **Phaser rendered client** (map, circle, flag, players, keyboard, smoothing) | ✅ **done (Phase 1)** — `web/net.js` + `web/game.js` |
-| Lobby / host-controlled start / countdown / winner | ✅ **done (Phase 2)** — host presses ENTER; idle-timeout keepalive (§22.1) |
+| Lobby / host-controlled start / countdown / winner | ✅ **done (Phase 2)** — host presses ENTER; dead peers via TCP keepalive (app idle-timeout OFF: it kicked other teams' silent-but-valid clients) |
 | **UDP server discovery** (§19) | ✅ **done (Phase 3)** — bridge broadcasts, UI lists servers; manual host/port fallback |
 | Cross-team interop (vs another group's server) | ❌ not tested yet |
 | Client-side prediction (§31, optional) | ❌ not started |
