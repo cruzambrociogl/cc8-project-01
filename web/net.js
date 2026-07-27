@@ -22,7 +22,8 @@ export class NetClient {
     // it becomes visible again so we don't miss the server's idle window.
     if (typeof document !== "undefined")
       document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && this.myId != null) this.send({ type: "INPUT", playerId: this.myId, direction: this.lastDir });
+        if (!document.hidden && this.myId != null && this.matchState === MATCH_STATE.RUNNING)
+          this.send({ type: "INPUT", playerId: this.myId, direction: this.lastDir });
       });
   }
 
@@ -81,7 +82,11 @@ export class NetClient {
         this.myId = m.playerId;
         // resend current INPUT every 2s so we're not idle-dropped (even in lobby)
         this._stopKeepalive();
-        this._keepalive = setInterval(() => this.send({ type: "INPUT", playerId: this.myId, direction: this.lastDir }), 2000);
+        // Only keepalive DURING a running match — base v3 has no lobby heartbeat, and
+        // an INPUT before the match can draw ERROR/GAME_NOT_STARTED from a strict server.
+        this._keepalive = setInterval(() => {
+          if (this.matchState === MATCH_STATE.RUNNING) this.send({ type: "INPUT", playerId: this.myId, direction: this.lastDir });
+        }, 2000);
         this._emit("joined", m); break;
       case "LOBBY_STATE":
         this.matchState = m.state; m.players.forEach((p) => this.names.set(p.playerId, p.name));

@@ -204,10 +204,11 @@ function handle(conn, msg) {
       if (conn.playerId != null) return; // ignore duplicate join
       if (state !== MATCH_STATE.WAITING) { send(conn.socket, { type: "JOIN_REJECTED", reason: REJECT_REASON.GAME_ALREADY_STARTED }); conn.socket.destroy(); return; }
       if (players.size >= CFG.maximumPlayers) { send(conn.socket, { type: "JOIN_REJECTED", reason: REJECT_REASON.GAME_FULL }); conn.socket.destroy(); return; }
-      const name = (msg.name ?? "").trim();
-      const nameBytes = new TextEncoder().encode(name).length;              // A.2: bytes
-      if (nameBytes < 1 || nameBytes > 20) { send(conn.socket, { type: "JOIN_REJECTED", reason: REJECT_REASON.INVALID_NAME }); conn.socket.destroy(); return; }
       const id = nextPlayerId++;
+      // Tolerant reader: never reject a join over the name. §28.1's "20" is
+      // ambiguous (bytes vs chars) across teams, so we accept anything, clamp for
+      // display, and default an empty name — rather than kick another team's client.
+      const name = ((msg.name ?? "").trim().slice(0, 24)) || `P${id}`;
       conn.playerId = id;
       players.set(id, { id, name, x: 0, y: 0, direction: DIRECTION.NONE, hasFlag: false, wantsInteract: false, socket: conn.socket });
       send(conn.socket, { type: "JOIN_ACCEPTED", playerId: id, gameId: CFG.gameId });
